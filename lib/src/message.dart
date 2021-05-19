@@ -66,7 +66,7 @@ abstract class Message extends Equatable {
   /// Message [Status]
   final Status? status;
 
-  /// Timestamp in seconds
+  /// Timestamp in ms
   final int? timestamp;
 
   /// [MessageType]
