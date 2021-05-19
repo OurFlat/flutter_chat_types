@@ -1,5 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:equatable/equatable.dart';
 import 'package:meta/meta.dart';
+
 import 'preview_data.dart' show PreviewData;
 import 'util.dart';
 
@@ -12,7 +14,7 @@ enum Status { delivered, error, read, sending }
 /// An abstract class that contains all variables and methods
 /// every message will have.
 @immutable
-abstract class Message extends Equatable {
+abstract class Message extends Equatable implements Comparable {
   const Message(
     this.authorId,
     this.id,
@@ -20,12 +22,13 @@ abstract class Message extends Equatable {
     this.status,
     this.timestamp,
     this.type,
+    this.editedAt,
   );
 
   /// Creates a particular message from a map (decoded JSON).
   /// Type is determined by the `type` field.
   factory Message.fromJson(Map<String, dynamic> json) {
-    final type = json['type'] as String;
+    final type = json['type'] as String? ?? 'error';
 
     switch (type) {
       case 'file':
@@ -37,20 +40,18 @@ abstract class Message extends Equatable {
       case 'audio':
         return AudioMessage.fromJson(json);
       default:
-        throw ArgumentError('Unexpected value for message type');
+        throw ArgumentError('Unsupported message type');
     }
   }
 
-  /// Creates a copy of the message with an updated data
-  /// [metadata] with null value will nullify existing metadata, otherwise
-  /// both metadatas will be merged into one Map, where keys from a passed
-  /// metadata will overwite keys from the previous one.
-  /// [previewData] will be only set for the text message type.
-  /// [status] with null value will be overwritten by the previous status.
+  /// Should be able to update all fields
   Message copyWith({
+    String? authorId,
+    String? id,
     Map<String, dynamic>? metadata,
-    PreviewData? previewData,
     Status? status,
+    int? timestamp,
+    Timestamp? editedAt,
   });
 
   /// Converts a particular message to the map representation, encodable to JSON.
@@ -73,48 +74,99 @@ abstract class Message extends Equatable {
 
   /// [MessageType]
   final MessageType type;
+
+  /// The date when this message was last edited, used for cache
+  final Timestamp? editedAt;
+
+  @override
+  // ignore: type_annotate_public_apis
+  int compareTo(other) => other.timestamp.compareTo(timestamp);
 }
 
-/// A class that represents partial file message.
+/// A class that represents text message.
 @immutable
-class PartialFile {
-  /// Creates a partial file message with all variables file can have.
-  /// Use [FileMessage] to create a full message.
-  /// You can use [FileMessage.fromPartial] constructor to create a full
-  /// message from a partial one.
-  const PartialFile({
-    required this.fileName,
-    this.mimeType,
-    required this.size,
-    required this.uri,
-  });
+class TextMessage extends Message {
+  /// Creates a text message.
+  const TextMessage({
+    required String authorId,
+    required String id,
+    Map<String, dynamic>? metadata,
+    this.previewData,
+    Status? status,
+    required this.text,
+    int? timestamp,
+    Timestamp? editedAt,
+  }) : super(authorId, id, metadata, status, timestamp, MessageType.text, editedAt);
 
-  /// Creates a partial file message from a map (decoded JSON).
-  PartialFile.fromJson(Map<String, dynamic> json)
-      : fileName = json['fileName'] as String,
-        mimeType = json['mimeType'] as String?,
-        size = json['size'].round() as int,
-        uri = json['uri'] as String;
+  /// Creates a text message from a map (decoded JSON).
+  TextMessage.fromJson(Map<String, dynamic> json)
+      : previewData =
+            json['previewData'] == null ? null : PreviewData.fromJson(json['previewData'] as Map<String, dynamic>),
+        text = json['text'] as String,
+        super(
+          json['authorId'] as String,
+          json['id'] as String,
+          json['metadata'] as Map<String, dynamic>?,
+          getStatusFromString(json['status'] as String?),
+          json['timestamp'] as int?,
+          MessageType.text,
+          (json['editedAt'] as Timestamp?) ?? Timestamp.fromMillisecondsSinceEpoch(0),
+        );
 
-  /// Converts a partial file message to the map representation, encodable to JSON.
+  /// See [PreviewData]
+  final PreviewData? previewData;
+
+  /// User's message
+  final String text;
+
+  /// Converts a text message to the map representation, encodable to JSON.
+  @override
   Map<String, dynamic> toJson() => {
-        'fileName': fileName,
-        'mimeType': mimeType,
-        'size': size,
-        'uri': uri,
+        'authorId': authorId,
+        'id': id,
+        'metadata': metadata,
+        'previewData': previewData?.toJson(),
+        'status': status,
+        'text': text,
+        'timestamp': timestamp,
+        'type': 'text',
+        'editedAt': FieldValue.serverTimestamp(),
       };
 
-  /// The name of the file
-  final String fileName;
+  @override
+  TextMessage copyWith({
+    String? authorId,
+    String? id,
+    Map<String, dynamic>? metadata,
+    Status? status,
+    int? timestamp,
+    Timestamp? editedAt,
+    PreviewData? previewData,
+    String? text,
+  }) =>
+      TextMessage(
+        authorId: authorId ?? this.authorId,
+        id: id ?? this.id,
+        metadata: metadata ?? this.metadata,
+        status: status ?? this.status,
+        timestamp: timestamp ?? this.timestamp,
+        editedAt: editedAt ?? this.editedAt,
+        previewData: previewData ?? this.previewData,
+        text: text ?? this.text,
+      );
 
-  /// Media type
-  final String? mimeType;
-
-  /// Size of the file in bytes
-  final int size;
-
-  /// The file source (either a remote URL or a local resource)
-  final String uri;
+  /// Equatable props
+  @override
+  List<Object?> get props => [
+        authorId,
+        id,
+        metadata,
+        previewData,
+        status,
+        text,
+        timestamp,
+        editedAt,
+      ];
 }
 
 /// A class that represents file message.
@@ -130,22 +182,9 @@ class FileMessage extends Message {
     required this.size,
     Status? status,
     int? timestamp,
+    Timestamp? editedAt,
     required this.uri,
-  }) : super(authorId, id, metadata, status, timestamp, MessageType.file);
-
-  /// Creates a full file message from a partial one.
-  FileMessage.fromPartial({
-    required String authorId,
-    required String id,
-    Map<String, dynamic>? metadata,
-    required PartialFile partialFile,
-    Status? status,
-    int? timestamp,
-  })  : fileName = partialFile.fileName,
-        mimeType = partialFile.mimeType,
-        size = partialFile.size,
-        uri = partialFile.uri,
-        super(authorId, id, metadata, status, timestamp, MessageType.file);
+  }) : super(authorId, id, metadata, status, timestamp, MessageType.file, editedAt);
 
   /// Creates a file message from a map (decoded JSON).
   FileMessage.fromJson(Map<String, dynamic> json)
@@ -160,7 +199,20 @@ class FileMessage extends Message {
           getStatusFromString(json['status'] as String?),
           json['timestamp'] as int?,
           MessageType.file,
+          (json['editedAt'] as Timestamp?) ?? Timestamp.fromMillisecondsSinceEpoch(0),
         );
+
+  /// The name of the file
+  final String fileName;
+
+  /// Media type
+  final String? mimeType;
+
+  /// Size of the file in bytes
+  final int size;
+
+  /// The file source (either a remote URL or a local resource)
+  final String uri;
 
   /// Converts a file message to the map representation, encodable to JSON.
   @override
@@ -175,37 +227,34 @@ class FileMessage extends Message {
         'timestamp': timestamp,
         'type': 'file',
         'uri': uri,
+        'editedAt': FieldValue.serverTimestamp(),
       };
 
-  /// Creates a copy of the file message with an updated data.
-  /// [metadata] with null value will nullify existing metadata, otherwise
-  /// both metadatas will be merged into one Map, where keys from a passed
-  /// metadata will overwite keys from the previous one.
-  /// [previewData] is ignored for this message type.
-  /// [status] with null value will be overwritten by the previous status.
   @override
-  Message copyWith({
+  FileMessage copyWith({
+    String? authorId,
+    String? id,
     Map<String, dynamic>? metadata,
-    PreviewData? previewData,
     Status? status,
-  }) {
-    return FileMessage(
-      authorId: authorId,
-      fileName: fileName,
-      id: id,
-      metadata: metadata == null
-          ? null
-          : {
-              ...this.metadata ?? {},
-              ...metadata,
-            },
-      mimeType: mimeType,
-      size: size,
-      status: status ?? this.status,
-      timestamp: timestamp,
-      uri: uri,
-    );
-  }
+    int? timestamp,
+    Timestamp? editedAt,
+    String? fileName,
+    String? mimeType,
+    int? size,
+    String? uri,
+  }) =>
+      FileMessage(
+        authorId: authorId ?? this.authorId,
+        id: id ?? this.id,
+        metadata: metadata ?? this.metadata,
+        status: status ?? this.status,
+        timestamp: timestamp ?? this.timestamp,
+        editedAt: editedAt ?? this.editedAt,
+        fileName: fileName ?? this.fileName,
+        mimeType: mimeType ?? this.mimeType,
+        size: size ?? this.size,
+        uri: uri ?? this.uri,
+      );
 
   /// Equatable props
   @override
@@ -219,67 +268,8 @@ class FileMessage extends Message {
         status,
         timestamp,
         uri,
+        editedAt,
       ];
-
-  /// The name of the file
-  final String fileName;
-
-  /// Media type
-  final String? mimeType;
-
-  /// Size of the file in bytes
-  final int size;
-
-  /// The file source (either a remote URL or a local resource)
-  final String uri;
-}
-
-/// A class that represents partial image message.
-@immutable
-class PartialImage {
-  /// Creates a partial image message with all variables image can have.
-  /// Use [ImageMessage] to create a full message.
-  /// You can use [ImageMessage.fromPartial] constructor to create a full
-  /// message from a partial one.
-  const PartialImage({
-    this.height,
-    required this.imageName,
-    required this.size,
-    required this.uri,
-    this.width,
-  });
-
-  /// Creates a partial image message from a map (decoded JSON).
-  PartialImage.fromJson(Map<String, dynamic> json)
-      : height = json['height']?.toDouble() as double?,
-        imageName = json['imageName'] as String,
-        size = json['size'].round() as int,
-        uri = json['uri'] as String,
-        width = json['width']?.toDouble() as double?;
-
-  /// Converts a partial image message to the map representation, encodable to JSON.
-  Map<String, dynamic> toJson() => {
-        'height': height,
-        'imageName': imageName,
-        'size': size,
-        'uri': uri,
-        'width': width,
-      };
-
-  /// Image height in pixels
-  final double? height;
-
-  /// The name of the image
-  final String imageName;
-
-  /// Size of the image in bytes
-  final int size;
-
-  /// The image source (either a remote URL or a local resource)
-  final String uri;
-
-  /// Image width in pixels
-  final double? width;
 }
 
 /// A class that represents image message.
@@ -295,24 +285,10 @@ class ImageMessage extends Message {
     required this.size,
     Status? status,
     int? timestamp,
+    Timestamp? editedAt,
     required this.uri,
     this.width,
-  }) : super(authorId, id, metadata, status, timestamp, MessageType.image);
-
-  /// Creates a full image message from a partial one.
-  ImageMessage.fromPartial({
-    required String authorId,
-    required String id,
-    Map<String, dynamic>? metadata,
-    required PartialImage partialImage,
-    Status? status,
-    int? timestamp,
-  })  : height = partialImage.height,
-        imageName = partialImage.imageName,
-        size = partialImage.size,
-        uri = partialImage.uri,
-        width = partialImage.width,
-        super(authorId, id, metadata, status, timestamp, MessageType.image);
+  }) : super(authorId, id, metadata, status, timestamp, MessageType.image, editedAt);
 
   /// Creates an image message from a map (decoded JSON).
   ImageMessage.fromJson(Map<String, dynamic> json)
@@ -328,7 +304,23 @@ class ImageMessage extends Message {
           getStatusFromString(json['status'] as String?),
           json['timestamp'] as int?,
           MessageType.image,
+          (json['editedAt'] as Timestamp?) ?? Timestamp.fromMillisecondsSinceEpoch(0),
         );
+
+  /// Image height in pixels
+  final double? height;
+
+  /// The name of the image
+  final String imageName;
+
+  /// Size of the image in bytes
+  final int size;
+
+  /// The image source (either a remote URL or a local resource)
+  final String uri;
+
+  /// Image width in pixels
+  final double? width;
 
   /// Converts an image message to the map representation, encodable to JSON.
   @override
@@ -344,36 +336,35 @@ class ImageMessage extends Message {
         'type': 'image',
         'uri': uri,
         'width': width,
+        'editedAt': FieldValue.serverTimestamp(),
       };
 
-  /// Creates a copy of the image message with an updated data
-  /// [metadata] with null value will nullify existing metadata, otherwise
-  /// both metadatas will be merged into one Map, where keys from a passed
-  /// metadata will overwite keys from the previous one.
-  /// [previewData] is ignored for this message type.
-  /// [status] with null value will be overwritten by the previous status.
   @override
-  Message copyWith({
+  ImageMessage copyWith({
+    String? authorId,
+    String? id,
     Map<String, dynamic>? metadata,
-    PreviewData? previewData,
     Status? status,
+    int? timestamp,
+    Timestamp? editedAt,
+    double? height,
+    String? imageName,
+    int? size,
+    String? uri,
+    double? width,
   }) {
     return ImageMessage(
-      authorId: authorId,
-      height: height,
-      id: id,
-      imageName: imageName,
-      metadata: metadata == null
-          ? null
-          : {
-              ...this.metadata ?? {},
-              ...metadata,
-            },
-      size: size,
+      authorId: authorId ?? this.authorId,
+      id: id ?? this.id,
+      metadata: metadata ?? this.metadata,
       status: status ?? this.status,
-      timestamp: timestamp,
-      uri: uri,
-      width: width,
+      timestamp: timestamp ?? this.timestamp,
+      editedAt: editedAt ?? this.editedAt,
+      height: height ?? this.height,
+      imageName: imageName ?? this.imageName,
+      size: size ?? this.size,
+      uri: uri ?? this.uri,
+      width: width ?? this.width,
     );
   }
 
@@ -390,183 +381,11 @@ class ImageMessage extends Message {
         timestamp,
         uri,
         width,
+        editedAt,
       ];
-
-  /// Image height in pixels
-  final double? height;
-
-  /// The name of the image
-  final String imageName;
-
-  /// Size of the image in bytes
-  final int size;
-
-  /// The image source (either a remote URL or a local resource)
-  final String uri;
-
-  /// Image width in pixels
-  final double? width;
 }
 
-/// A class that represents partial text message.
-@immutable
-class PartialText {
-  /// Creates a partial text message with all variables text can have.
-  /// Use [TextMessage] to create a full message.
-  /// You can use [TextMessage.fromPartial] constructor to create a full
-  /// message from a partial one.
-  const PartialText({
-    required this.text,
-  });
-
-  /// Creates a partial text message from a map (decoded JSON).
-  PartialText.fromJson(Map<String, dynamic> json)
-      : text = json['text'] as String;
-
-  /// Converts a partial text message to the map representation, encodable to JSON.
-  Map<String, dynamic> toJson() => {
-        'text': text,
-      };
-
-  /// User's message
-  final String text;
-}
-
-/// A class that represents text message.
-@immutable
-class TextMessage extends Message {
-  /// Creates a text message.
-  const TextMessage({
-    required String authorId,
-    required String id,
-    Map<String, dynamic>? metadata,
-    this.previewData,
-    Status? status,
-    required this.text,
-    int? timestamp,
-  }) : super(authorId, id, metadata, status, timestamp, MessageType.text);
-
-  /// Creates a full text message from a partial one.
-  TextMessage.fromPartial({
-    required String authorId,
-    required String id,
-    Map<String, dynamic>? metadata,
-    required PartialText partialText,
-    Status? status,
-    int? timestamp,
-  })  : previewData = null,
-        text = partialText.text,
-        super(authorId, id, metadata, status, timestamp, MessageType.text);
-
-  /// Creates a text message from a map (decoded JSON).
-  TextMessage.fromJson(Map<String, dynamic> json)
-      : previewData = json['previewData'] == null
-            ? null
-            : PreviewData.fromJson(json['previewData'] as Map<String, dynamic>),
-        text = json['text'] as String,
-        super(
-          json['authorId'] as String,
-          json['id'] as String,
-          json['metadata'] as Map<String, dynamic>?,
-          getStatusFromString(json['status'] as String?),
-          json['timestamp'] as int?,
-          MessageType.text,
-        );
-
-  /// Converts a text message to the map representation, encodable to JSON.
-  @override
-  Map<String, dynamic> toJson() => {
-        'authorId': authorId,
-        'id': id,
-        'metadata': metadata,
-        'previewData': previewData?.toJson(),
-        'status': status,
-        'text': text,
-        'timestamp': timestamp,
-        'type': 'text',
-      };
-
-  /// Creates a copy of the text message with an updated data
-  /// [metadata] with null value will nullify existing metadata, otherwise
-  /// both metadatas will be merged into one Map, where keys from a passed
-  /// metadata will overwite keys from the previous one.
-  /// [status] with null value will be overwritten by the previous status.
-  @override
-  Message copyWith({
-    Map<String, dynamic>? metadata,
-    PreviewData? previewData,
-    Status? status,
-  }) {
-    return TextMessage(
-      authorId: authorId,
-      id: id,
-      metadata: metadata == null
-          ? null
-          : {
-              ...this.metadata ?? {},
-              ...metadata,
-            },
-      previewData: previewData,
-      status: status ?? this.status,
-      text: text,
-      timestamp: timestamp,
-    );
-  }
-
-  /// Equatable props
-  @override
-  List<Object?> get props =>
-      [authorId, id, metadata, previewData, status, text, timestamp];
-
-  /// See [PreviewData]
-  final PreviewData? previewData;
-
-  /// User's message
-  final String text;
-}
-
-@immutable
-class PartialAudio {
-  /// Creates a partial audio message with all variables audio can have.
-  /// Use [AudioMessage] to create a full message.
-  /// You can use [AudioMessage.fromPartial] constructor to create a full
-  /// message from a partial one.
-  const PartialAudio({
-    required this.length,
-    this.mimeType,
-    this.waveForm,
-    required this.uri,
-  });
-
-  /// Creates a partial audio message from a map (decoded JSON).
-  PartialAudio.fromJson(Map<String, dynamic> json)
-      : length = Duration(milliseconds: json['length'] as int),
-        mimeType = json['mimeType'] as String?,
-        waveForm = json['waveForm'] as List<double>,
-        uri = json['uri'] as String;
-
-  /// Converts a partial audio message to the map representation, encodable to JSON.
-  Map<String, dynamic> toJson() => {
-        'length': length,
-        'mimeType': mimeType,
-        'waveForm': waveForm,
-        'uri': uri,
-      };
-
-  /// The length of the audio
-  final Duration length;
-
-  /// Media type
-  final String? mimeType;
-
-  /// Wave form represented as a list of decibel level, each comprised between 0 and 120
-  final List<double>? waveForm;
-
-  /// The audio file source (either a remote URL or a local resource)
-  final String uri;
-}
-
-/// A class that represents file message.
+/// A class that represents audio message.
 @immutable
 class AudioMessage extends Message {
   /// Creates an audio message.
@@ -579,22 +398,9 @@ class AudioMessage extends Message {
     this.waveForm,
     Status? status,
     int? timestamp,
+    Timestamp? editedAt,
     required this.uri,
-  }) : super(authorId, id, metadata, status, timestamp, MessageType.audio);
-
-  /// Creates a full audio message from a partial one.
-  AudioMessage.fromPartial({
-    required String authorId,
-    required String id,
-    Map<String, dynamic>? metadata,
-    required PartialAudio partialAudio,
-    Status? status,
-    int? timestamp,
-  })  : length = partialAudio.length,
-        mimeType = partialAudio.mimeType,
-        waveForm = partialAudio.waveForm,
-        uri = partialAudio.uri,
-        super(authorId, id, metadata, status, timestamp, MessageType.audio);
+  }) : super(authorId, id, metadata, status, timestamp, MessageType.audio, editedAt);
 
   /// Creates an audio message from a map (decoded JSON).
   AudioMessage.fromJson(Map<String, dynamic> json)
@@ -609,6 +415,7 @@ class AudioMessage extends Message {
           getStatusFromString(json['status'] as String?),
           json['timestamp'] as int?,
           MessageType.audio,
+          (json['editedAt'] as Timestamp?) ?? Timestamp.fromMillisecondsSinceEpoch(0),
         );
 
   /// Converts an audio message to the map representation, encodable to JSON.
@@ -624,32 +431,34 @@ class AudioMessage extends Message {
         'timestamp': timestamp,
         'type': 'audio',
         'uri': uri,
+        'editedAt': FieldValue.serverTimestamp(),
       };
 
-  /// Creates a copy of the audio message with an updated data
   @override
-  Message copyWith({
+  AudioMessage copyWith({
+    String? authorId,
+    String? id,
     Map<String, dynamic>? metadata,
-    PreviewData? previewData,
     Status? status,
-  }) {
-    return AudioMessage(
-      authorId: authorId,
-      length: length,
-      id: id,
-      metadata: metadata == null
-          ? null
-          : {
-              ...this.metadata ?? {},
-              ...metadata,
-            },
-      mimeType: mimeType,
-      waveForm: waveForm,
-      status: status ?? this.status,
-      timestamp: timestamp,
-      uri: uri,
-    );
-  }
+    int? timestamp,
+    Timestamp? editedAt,
+    Duration? length,
+    String? mimeType,
+    List<double>? waveForm,
+    String? uri,
+  }) =>
+      AudioMessage(
+        authorId: authorId ?? this.authorId,
+        id: id ?? this.id,
+        metadata: metadata ?? this.metadata,
+        status: status ?? this.status,
+        timestamp: timestamp ?? this.timestamp,
+        editedAt: editedAt ?? this.editedAt,
+        length: length ?? this.length,
+        mimeType: mimeType ?? this.mimeType,
+        waveForm: waveForm ?? this.waveForm,
+        uri: uri ?? this.uri,
+      );
 
   /// Equatable props
   @override
@@ -662,6 +471,7 @@ class AudioMessage extends Message {
         status,
         timestamp,
         uri,
+        editedAt,
       ];
 
   /// The length of the audio
