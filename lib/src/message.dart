@@ -69,7 +69,7 @@ abstract class Message extends Equatable implements Comparable {
   /// Message [Status]
   final Status? status;
 
-  /// Timestamp in seconds since easier to work with
+  /// Timestamp in milliseconds
   final int? timestamp;
 
   /// [MessageType]
