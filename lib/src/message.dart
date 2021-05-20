@@ -96,6 +96,7 @@ class TextMessage extends Message {
     required this.text,
     int? timestamp,
     Timestamp? editedAt,
+    this.lastUserEdit,
   }) : super(authorId, id, metadata, status, timestamp, MessageType.text, editedAt);
 
   /// Creates a text message from a map (decoded JSON).
@@ -103,6 +104,7 @@ class TextMessage extends Message {
       : previewData =
             json['previewData'] == null ? null : PreviewData.fromJson(json['previewData'] as Map<String, dynamic>),
         text = json['text'] as String,
+        lastUserEdit = json['lastUserEdit'] as Timestamp?,
         super(
           json['authorId'] as String,
           json['id'] as String,
@@ -119,6 +121,9 @@ class TextMessage extends Message {
   /// User's message
   final String text;
 
+  /// The last time the user edited this message, null if not edited yet
+  final Timestamp? lastUserEdit;
+
   /// Converts a text message to the map representation, encodable to JSON.
   @override
   Map<String, dynamic> toJson() => {
@@ -130,6 +135,7 @@ class TextMessage extends Message {
         'timestamp': timestamp,
         'type': 'text',
         'editedAt': FieldValue.serverTimestamp(),
+        'lastUserEdit': lastUserEdit,
       };
 
   @override
@@ -142,6 +148,7 @@ class TextMessage extends Message {
     Timestamp? editedAt,
     PreviewData? previewData,
     String? text,
+    Timestamp? lastUserEdit,
   }) =>
       TextMessage(
         authorId: authorId ?? this.authorId,
@@ -152,6 +159,7 @@ class TextMessage extends Message {
         editedAt: editedAt ?? this.editedAt,
         previewData: previewData ?? this.previewData,
         text: text ?? this.text,
+        lastUserEdit: lastUserEdit ?? this.lastUserEdit,
       );
 
   /// Equatable props
@@ -165,6 +173,7 @@ class TextMessage extends Message {
         text,
         timestamp,
         editedAt,
+        lastUserEdit,
       ];
 }
 
