@@ -112,7 +112,7 @@ class TextMessage extends Message {
           getStatusFromString(json['status'] as String?),
           json['timestamp'] as int?,
           MessageType.text,
-          (json['editedAt'] as Timestamp?) ?? Timestamp.fromMillisecondsSinceEpoch(0),
+          json['editedAt'] as Timestamp?,
         );
 
   /// See [PreviewData]
@@ -207,7 +207,7 @@ class FileMessage extends Message {
           getStatusFromString(json['status'] as String?),
           json['timestamp'] as int?,
           MessageType.file,
-          (json['editedAt'] as Timestamp?) ?? Timestamp.fromMillisecondsSinceEpoch(0),
+          json['editedAt'] as Timestamp?,
         );
 
   /// The name of the file
@@ -311,7 +311,7 @@ class ImageMessage extends Message {
           getStatusFromString(json['status'] as String?),
           json['timestamp'] as int?,
           MessageType.image,
-          (json['editedAt'] as Timestamp?) ?? Timestamp.fromMillisecondsSinceEpoch(0),
+          json['editedAt'] as Timestamp?,
         );
 
   /// Image height in pixels
@@ -421,7 +421,7 @@ class AudioMessage extends Message {
           getStatusFromString(json['status'] as String?),
           json['timestamp'] as int?,
           MessageType.audio,
-          (json['editedAt'] as Timestamp?) ?? Timestamp.fromMillisecondsSinceEpoch(0),
+          json['editedAt'] as Timestamp?,
         );
 
   /// Converts an audio message to the map representation, encodable to JSON.
